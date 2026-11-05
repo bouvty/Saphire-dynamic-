@@ -3,6 +3,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -34,7 +35,17 @@ async def lifespan(app):
         if DB is not None:
             await DB.close()
 
-app = FastAPI(title="Saphire Shoppex Delivery", lifespan=lifespan, docs_url=None, redoc_url=None)
+app = FastAPI(title="Saphire Shoppex Delivery", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    return response
 
 ACCESS_HTML = (Path(__file__).parent / "access_declined.html").read_text(encoding="utf-8")
 
@@ -72,7 +83,11 @@ def authenticate(request: Request, raw: bytes, kind: str):
     signature = request.headers.get("x-shoppex-signature-v2", "")
     delivery_id = request.headers.get("x-shoppex-delivery", "")
     timestamp = request.headers.get("x-shoppex-timestamp", "")
+    if len(signature) > 256 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", delivery_id):
+        raise HTTPException(401, "Invalid signature metadata")
     fields = dict(part.strip().split("=", 1) for part in signature.split(",") if "=" in part)
+    if len(fields) != 2 or not signature.startswith("v1,"):
+        raise HTTPException(401, "Invalid signature version")
     try:
         numeric_timestamp = int(timestamp)
     except (TypeError, ValueError):
@@ -143,6 +158,10 @@ async def set_status(order, line, kind, status, error):
                            order, line, kind, status, error)
 
 async def fulfill(kind: str, request: Request):
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise HTTPException(415, "Content-Type must be application/json")
+    if request.headers.get("content-length", "0").isdigit() and int(request.headers.get("content-length", "0")) > 65536:
+        raise HTTPException(413, "Payload too large")
     raw = await request.body()
     if len(raw) > 65536:
         raise HTTPException(413, "Payload too large")
@@ -156,6 +175,10 @@ async def fulfill(kind: str, request: Request):
     if not isinstance(body, dict):
         raise HTTPException(422, "Expected JSON object")
     order, line, quantity, server = extract(body)
+    # Shoppex's delivery ID is the line-level fallback when multiple deliveries
+    # share one invoice; never generate a second provider key on a retry.
+    if line == "default":
+        line = request.headers["x-shoppex-delivery"]
     pid = provider_order_id(order, line, kind)
     async with DB.acquire() as conn:
         async with conn.transaction():
@@ -163,7 +186,7 @@ async def fulfill(kind: str, request: Request):
                   (shoppex_order_id,line_item_id,members_type,quantity,discord_server,provider_order_id,status,request_payload)
                   VALUES($1,$2,$3,$4,$5,$6,'processing',$7::jsonb)
                   ON CONFLICT(shoppex_order_id,line_item_id,members_type) DO NOTHING RETURNING *""",
-                  order, line, kind, quantity, server, pid, json.dumps(body))
+                  order, line, kind, quantity, server, pid, json.dumps({"order_id": order, "line_item_id": line, "quantity": quantity, "members_type": kind, "discord_server": server}))
             if row is None:
                 row = await conn.fetchrow("""SELECT * FROM public.delivery_orders WHERE
                   shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3""", order, line, kind)
@@ -190,7 +213,7 @@ async def fulfill(kind: str, request: Request):
         await set_status(order, line, kind, "unknown", "Provider outcome uncertain")
         log.warning("Unknown outcome for %s (%s)", pid, type(exc).__name__)
         raise HTTPException(502, "Provider response uncertain; manual investigation required")
-    if response.status_code >= 500:
+    if response.status_code == 429 or response.status_code >= 500:
         await set_status(order, line, kind, "unknown", "Provider server error")
         raise HTTPException(502, "Provider outcome uncertain; manual investigation required")
     if response.is_success and payload.get("success") is True and isinstance(payload.get("key"), str) and payload["key"].strip():
@@ -201,6 +224,9 @@ async def fulfill(kind: str, request: Request):
                 order, line, kind, payload["key"], json.dumps(payload))
         return JSONResponse({"deliver": payload["key"]})
     error = str(payload.get("error", "Provider rejected order"))[:500]
+    if response.is_success and payload.get("success") is True:
+        await set_status(order, line, kind, "unknown", "Provider claimed success without a usable key")
+        raise HTTPException(502, "Provider response incomplete; manual investigation required")
     await set_status(order, line, kind, "failed", error)
     raise HTTPException(502, "Provider could not fulfil order")
 
