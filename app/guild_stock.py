@@ -126,7 +126,7 @@ async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) ->
         try:
             response = await client.get(
                 f"https://discord.com/api/v10/guilds/{guild_id}",
-                headers={"Accept": "application/json"},
+                headers={"Authorization": "Bot " + token, "Accept": "application/json"},
             )
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
@@ -143,7 +143,7 @@ async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) ->
         try:
             preview = await client.get(
                 f"https://discord.com/api/v10/guilds/{guild_id}/preview",
-                headers={"Authorization": "Bot " + token, "Accept": "application/json"},
+                headers={"Accept": "application/json"},
             )
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
