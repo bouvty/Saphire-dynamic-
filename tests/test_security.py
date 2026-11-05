@@ -54,6 +54,34 @@ class SecurityTests(unittest.TestCase):
                 authenticate(request,payload,"offline")
             self.assertEqual(exc.exception.status_code,401)
 
+
+    def test_browser_get_protected_routes_shows_access_declined(self):
+        with TestClient(app) as client:
+            for kind in ("online", "offline"):
+                response = client.get(
+                    "/v2/resellers/order/members/"+kind,
+                    headers={"accept":"text/html"},
+                )
+                self.assertEqual(response.status_code,401)
+                self.assertIn("text/html",response.headers["content-type"])
+                self.assertIn("Access Declined",response.text)
+                self.assertIn("Error 401",response.text)
+
+    def test_api_clients_keep_json_auth_errors(self):
+        with TestClient(app) as client:
+            route="/v2/resellers/order/members/online"
+            browserless=client.get(route,headers={"accept":"application/json"})
+            self.assertEqual(browserless.status_code,401)
+            self.assertIn("application/json",browserless.headers["content-type"])
+            signed=client.post(route,json={"order":"TEST","quantity":1},headers={"accept":"text/html"})
+            self.assertEqual(signed.status_code,401)
+            self.assertIn("application/json",signed.headers["content-type"])
+
+    def test_missing_route_stays_404(self):
+        with TestClient(app) as client:
+            resp=client.get("/not-a-real-endpoint",headers={"accept":"text/html"})
+            self.assertEqual(resp.status_code,404)
+
     def test_body_tampering_is_rejected(self):
         payload = b'{"order":"INV-TEST","product":"P1","quantity":1}'
         with patch.dict(os.environ, {"SHOPPEX_OFFLINE_SIGNING_SECRET":"test-secret"}):
