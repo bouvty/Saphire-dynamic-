@@ -229,8 +229,7 @@ def format_delivery_message(provider_key: str) -> str:
     return (
         "Thank you for using saphire ❤️\n"
         "please use our redeem panel below to redeem your key, follow the steps provided.\n"
-        "https://memberix.live/redeem\n"
-        f"key - {provider_key}"
+        f"https://memberix.live/redeem   KEY: {provider_key}"
     )
 
 
