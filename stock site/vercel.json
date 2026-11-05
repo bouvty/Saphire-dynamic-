@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/stock/check/guild",
+      "destination": "/index.html"
+    }
+  ]
+}
