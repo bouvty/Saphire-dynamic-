@@ -80,25 +80,63 @@ def authenticate(request: Request, raw: bytes, kind: str):
     secret = os.getenv(env_name, "")
     if not secret:
         raise HTTPException(503, "Signing secret not configured")
-    signature = request.headers.get("x-shoppex-signature-v2", "")
-    delivery_id = request.headers.get("x-shoppex-delivery", "")
-    timestamp = request.headers.get("x-shoppex-timestamp", "")
-    if len(signature) > 256 or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,128}", delivery_id):
-        raise HTTPException(401, "Invalid signature metadata")
-    fields = dict(part.strip().split("=", 1) for part in signature.split(",") if "=" in part)
-    if len(fields) != 2 or not signature.startswith("v1,"):
-        raise HTTPException(401, "Invalid signature version")
+    signature = request.headers.get("x-shoppex-signature-v2", "").strip()
+    timestamp = request.headers.get("x-shoppex-timestamp", "").strip()
+    signature_parts = signature.split(",")
+    fields = {}
+    if signature_parts and signature_parts[0] == "v1":
+        fields = dict(part.strip().split("=", 1) for part in signature_parts[1:] if "=" in part)
+    if len(signature) > 256 or not re.fullmatch(r"[a-fA-F0-9]{64}", fields.get("h", "")):
+        log.warning("Shoppex signature rejected: missing_or_invalid_v2_signature kind=%s signature_present=%s", kind, bool(signature))
+        raise HTTPException(401, "Invalid Shoppex signature")
     try:
         numeric_timestamp = int(timestamp)
-    except (TypeError, ValueError):
+    except ValueError:
         numeric_timestamp = 0
-    if (not delivery_id or not numeric_timestamp or str(numeric_timestamp) != fields.get("t")
-        or abs(time.time() - numeric_timestamp) > 300):
-        raise HTTPException(401, "Invalid Shoppex signature metadata")
-    message = delivery_id.encode() + b"." + timestamp.encode() + b"." + raw
-    expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
-    if not hmac.compare_digest(expected, fields.get("h", "")):
+    if numeric_timestamp <= 0 or str(numeric_timestamp) != fields.get("t") or abs(time.time() - numeric_timestamp) > 300:
+        log.warning("Shoppex signature rejected: missing_or_stale_timestamp kind=%s timestamp_present=%s", kind, bool(timestamp))
+        raise HTTPException(401, "Invalid Shoppex signature timestamp")
+
+    # Shoppex's webhook signing scheme includes a delivery identifier.
+    # Dynamic-product callbacks can supply that identifier under different
+    # header names or in the JSON body. We validate candidates against the
+    # HMAC, never trust an unverified identifier, and never accept unsigned calls.
+    candidates = [
+        request.headers.get("x-shoppex-delivery"),
+        request.headers.get("x-shoppex-delivery-id"),
+        request.headers.get("x-shoppex-webhook-id"),
+        request.headers.get("webhook-id"),
+    ]
+    try:
+        body = json.loads(raw)
+        if isinstance(body, dict):
+            for field in ("delivery_id", "deliveryId", "webhook_id", "event_id", "line_item_id"):
+                v = body.get(field)
+                if isinstance(v, (str, int)):
+                    candidates.append(str(v))
+            delivery = body.get("delivery")
+            if isinstance(delivery, dict):
+                for field in ("id", "uniqid"):
+                    if isinstance(delivery.get(field), (str, int)):
+                        candidates.append(str(delivery[field]))
+    except (ValueError, UnicodeDecodeError):
+        pass
+
+    verified_delivery_id = None
+    for candidate in dict.fromkeys(candidates):
+        if not isinstance(candidate, str) or not 1 <= len(candidate) <= 128:
+            continue
+        message = candidate.encode() + b"." + timestamp.encode() + b"." + raw
+        expected = hmac.new(secret.encode(), message, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(expected, fields["h"].lower()):
+            verified_delivery_id = candidate
+            break
+    if verified_delivery_id is None:
+        log.warning("Shoppex signature rejected: hmac_mismatch_or_missing_delivery_id kind=%s signed_id_candidates=%d headers=%s",
+                    kind, len([c for c in candidates if c]),
+                    ",".join(sorted(k for k in request.headers.keys() if k.startswith("x-shoppex-") or k == "webhook-id")))
         raise HTTPException(401, "Invalid Shoppex signature")
+    request.state.shoppex_delivery_id = verified_delivery_id
 
 def pick(body, *paths):
     for path in paths:
@@ -189,9 +227,9 @@ async def fulfill(kind: str, request: Request):
     # Shoppex's delivery ID is the line-level fallback when multiple deliveries
     # share one invoice; never generate a second provider key on a retry.
     if line == "default":
-        line = request.headers["x-shoppex-delivery"]
+        line = request.state.shoppex_delivery_id
     pid = provider_order_id(order, line, kind)
-    shoppex_delivery_id = request.headers.get("x-shoppex-delivery")
+    shoppex_delivery_id = request.state.shoppex_delivery_id
     product = pick(body, "product_id", "product.id", "product.uniqid", "product", "item.product_id")
     invoice = pick(body, "invoice_id", "invoice.id", "invoice.uniqid", "invoice", "order.invoice_id")
     customer_email = pick(body, "customer.email", "email", "customer_email", "buyer.email")
