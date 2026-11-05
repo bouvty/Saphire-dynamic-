@@ -3,7 +3,7 @@ Two signed Shoppex dynamic product URLs:
 - POST https://api.saphire.rip/v2/resellers/order/members/offline
 - POST https://api.saphire.rip/v2/resellers/order/members/online
 
-After a valid request, the API logs the order in Supabase, requests a Discorium key (one attempt only), stores the result, and responds with `{"deliver":"PROVIDER-KEY"}`. Repeated requests for completed orders return the existing key. Unknown outcomes need manual investigation to prevent duplicate provider charges.
+After a valid request, the API logs the order in Supabase, requests a Discorium key (one attempt only), stores the result, and responds with the provider key only as `text/plain` (HTTP 200), without JSON or any surrounding text. Repeated requests for completed orders return the existing key. Unknown outcomes need manual investigation to prevent duplicate provider charges.
 
 ## Configure Railway
 Set `DATABASE_URL`, `SHOPPEX_OFFLINE_SIGNING_SECRET`, `SHOPPEX_ONLINE_SIGNING_SECRET`, and `DISCORIUM_API_KEY` in Railway Variables. Do not commit them.
