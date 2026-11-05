@@ -58,7 +58,7 @@ async def sync_once(pool):
                     await conn.execute("""
                         UPDATE public.member_stock SET
                             offline_members=$1, online_members=$2,
-                            provider_success=true, source_url=$3,
+                            success=true, source_url=$3,
                             last_synced_at=now(), last_error=NULL,
                             updated_at=now()
                         WHERE id=1
@@ -95,10 +95,10 @@ async def public_stock(pool):
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow("""
-                SELECT offline_members, online_members, provider_success
+                SELECT offline_members, online_members, success
                 FROM public.member_stock WHERE id=1
             """)
-        if not row or not row["provider_success"] or row["offline_members"] is None or row["online_members"] is None:
+        if not row or not row["success"] or row["offline_members"] is None or row["online_members"] is None:
             return JSONResponse({"success": False, "detail": "Stock not synchronized yet"}, status_code=503)
         return JSONResponse({
             "offline_members": row["offline_members"],
