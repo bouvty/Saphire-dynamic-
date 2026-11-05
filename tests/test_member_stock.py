@@ -1,7 +1,10 @@
 import unittest
-from app.member_stock import validate_stock, public_stock
+from app.member_stock import validate_stock, public_stock, SYNC_SECONDS
 
 class StockValidationTests(unittest.TestCase):
+    def test_refresh_exactly_fifteen_minutes(self):
+        self.assertEqual(SYNC_SECONDS, 900)
+
     def test_valid_provider_stock(self):
         self.assertEqual(validate_stock({"offline_members":9580,"online_members":1092,"success":True}),(9580,1092))
 
