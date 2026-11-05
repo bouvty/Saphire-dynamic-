@@ -48,6 +48,33 @@ async def security_headers(request: Request, call_next):
     return response
 
 ACCESS_HTML = (Path(__file__).parent / "access_declined.html").read_text(encoding="utf-8")
+UNAUTHORIZED_HTML = (ACCESS_HTML
+    .replace("Error 404 · Restricted Endpoint", "Error 401 · Restricted Endpoint")
+    .replace("This API endpoint is unavailable or doesn't exist. Check the request URL and try again.",
+             "You are not authorized to access this endpoint. Valid API credentials or a verified request signature are required.")
+    .replace("REQUEST DENIED", "UNAUTHORIZED REQUEST")
+)
+
+def auth_error_response(request: Request, status_code: int, detail: str):
+    # Human browser GET visits show the branded access page.
+    # Shoppex POST requests (and all programmatic clients) keep JSON with the
+    # correct HTTP status, so dynamic delivery integrations can parse failures.
+    wants_html = (
+        request.method in ("GET", "HEAD")
+        and "text/html" in request.headers.get("accept", "").lower()
+    )
+    if wants_html:
+        return HTMLResponse(UNAUTHORIZED_HTML, status_code=status_code)
+    return JSONResponse({"detail": detail}, status_code=status_code)
+
+@app.exception_handler(401)
+async def unauthorized_handler(request: Request, exc: HTTPException):
+    return auth_error_response(request, 401, str(exc.detail))
+
+@app.exception_handler(403)
+async def forbidden_handler(request: Request, exc: HTTPException):
+    return auth_error_response(request, 403, str(exc.detail))
+
 
 @app.get("/_liveness")
 async def liveness():
@@ -297,3 +324,10 @@ async def offline(request: Request):
 @app.post("/v2/resellers/order/members/online")
 async def online(request: Request):
     return await fulfill("online", request)
+
+# These endpoints are POST-only for Shoppex. An interactive browser GET to
+# their URLs must show the branded unauthorized page, never call the provider.
+@app.get("/v2/resellers/order/members/offline", include_in_schema=False)
+@app.get("/v2/resellers/order/members/online", include_in_schema=False)
+async def protected_endpoint_browser(request: Request):
+    return auth_error_response(request, 401, "Valid signed Shoppex request required")
