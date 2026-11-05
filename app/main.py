@@ -14,6 +14,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from app.member_stock import sync_loop, public_stock
+from app.guild_stock import get_guild_stock
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("saphire.delivery")
@@ -52,7 +53,7 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "no-referrer"
-    if request.url.path.rstrip("/") == "/v2/stock/members" and request.method in ("GET", "HEAD"):
+    if (request.url.path.rstrip("/") == "/v2/stock/members" or request.url.path == "/v2/stock/members/check/guild") and request.method in ("GET", "HEAD"):
         # Public stock counts only; no credentials or customer data.
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Cache-Control"] = "public, max-age=60"
@@ -94,6 +95,11 @@ async def forbidden_handler(request: Request, exc: HTTPException):
 @app.get("/v2/stock/members", include_in_schema=False)
 async def get_member_stock():
     return await public_stock(DB)
+
+
+@app.get("/v2/stock/members/check/guild")
+async def check_guild_stock(guild_id: str = ""):
+    return await get_guild_stock(guild_id)
 
 
 @app.get("/_liveness")
