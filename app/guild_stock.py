@@ -1,6 +1,7 @@
 """Public guild-specific stock proxy; validates snowflakes before upstream access."""
 import asyncio
 import logging
+import os
 import re
 import time
 
@@ -55,28 +56,99 @@ def validate_guild_payload(payload: object, guild_id: str) -> dict:
     }
 
 
+async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) -> dict:
+    """Verify a guild using the official Discord bot API, not just its snowflake.
+
+    An unknown guild and a guild the bot is not in cannot always be
+    distinguished. Never label both cases 'invalid'.
+    """
+    token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="Discord guild verification is not configured on the API",
+        )
+    try:
+        response = await client.get(
+            f"https://discord.com/api/v10/guilds/{guild_id}",
+            headers={"Authorization": "Bot " + token, "Accept": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
+    if response.status_code == 401:
+        log.error("Discord guild verification credentials rejected")
+        raise HTTPException(status_code=503, detail="Discord guild verification unavailable")
+    if response.status_code == 429:
+        raise HTTPException(status_code=503, detail="Discord rate limit reached; retry later")
+    if response.status_code in (403, 404):
+        # A bot cannot query private guilds it hasn't joined. A public,
+        # discoverable guild can still be confirmed through the preview API.
+        try:
+            preview = await client.get(
+                f"https://discord.com/api/v10/guilds/{guild_id}/preview",
+                headers={"Authorization": "Bot " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
+        if preview.status_code != 200:
+            if preview.status_code == 429:
+                raise HTTPException(status_code=503, detail="Discord rate limit reached; retry later")
+            # Do not mistake inaccessible or undiscoverable servers for
+            # nonexistent ones. Do not request provider stock if unverified.
+            raise HTTPException(
+                status_code=404,
+                detail="Discord could not verify this server. Add the verification bot to the server or use a discoverable server.",
+            )
+        response = preview
+    if response.status_code != 200:
+        log.warning("Discord guild check failed with HTTP %s", response.status_code)
+        raise HTTPException(status_code=502, detail="Discord verification unavailable")
+    try:
+        body = response.json()
+        if not isinstance(body, dict) or str(body.get("id")) != guild_id:
+            raise ValueError("Guild ID mismatch")
+        name = body.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Missing guild name")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=502, detail="Invalid Discord verification response") from exc
+    return {"id": guild_id, "name": name[:100]}
+
+
 async def get_guild_stock(guild_id: str) -> dict:
     guild_id = validate_guild_id(guild_id)
     async with _cache_lock:
         cached = _cache.get(guild_id)
         if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
             return cached[1]
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(12), follow_redirects=False) as client:
-                response = await client.get(GUILD_STOCK_URL,
-                    params={"guild_id": guild_id}, headers={"Accept": "application/json"})
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12), follow_redirects=False) as client:
+            # Discord is checked FIRST. Never contact the stock provider
+            # for malformed, unverified, or inaccessible guild IDs.
+            discord_guild = await verify_guild_with_discord(client, guild_id)
+            try:
+                response = await client.get(
+                    GUILD_STOCK_URL,
+                    params={"guild_id": guild_id},
+                    headers={"Accept": "application/json"},
+                )
                 if response.status_code in (400, 404, 422):
-                    raise HTTPException(status_code=404, detail="Guild not found or unavailable at provider")
+                    raise HTTPException(
+                        status_code=404, detail="No provider stock found for this guild"
+                    )
                 response.raise_for_status()
                 if len(response.content) > MAX_RESPONSE_BYTES:
                     raise ValueError("Provider response too large")
                 payload = validate_guild_payload(response.json(), guild_id)
-        except HTTPException:
-            raise
-        except (httpx.HTTPError, ValueError) as error:
-            log.warning("Guild stock provider unavailable: %s", type(error).__name__)
-            raise HTTPException(status_code=502, detail="Guild stock provider unavailable") from error
+            except HTTPException:
+                raise
+            except (httpx.HTTPError, ValueError) as error:
+                log.warning("Guild stock provider unavailable: %s", type(error).__name__)
+                raise HTTPException(
+                    status_code=502, detail="Guild stock provider unavailable"
+                ) from error
         if len(_cache) >= 256:
             _cache.clear()
+        # Keep the original JSON keys and attach Discord-verified guild name.
+        payload["guild_name"] = discord_guild["name"]
         _cache[guild_id] = (time.monotonic(), payload)
         return payload
