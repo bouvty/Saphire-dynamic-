@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import asyncpg
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse, HTMLResponse
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("saphire.delivery")
@@ -280,7 +280,7 @@ async def fulfill(kind: str, request: Request):
                 if row["quantity"] != quantity:
                     raise HTTPException(409, "Order quantity mismatch on retry")
                 if row["status"] == "success":
-                    return JSONResponse({"deliver": row["provider_key"]})
+                    return PlainTextResponse(row["provider_key"])
                 if row["status"] == "failed":
                     raise HTTPException(502, "Provider rejected order; contact support")
                 raise HTTPException(503, "Delivery pending verification; contact support")
@@ -309,7 +309,7 @@ async def fulfill(kind: str, request: Request):
                 provider_response=$5::jsonb,updated_at=now()
                 WHERE shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3""",
                 order, line, kind, payload["key"], json.dumps(payload))
-        return JSONResponse({"deliver": payload["key"]})
+        return PlainTextResponse(payload["key"])
     error = str(payload.get("error", "Provider rejected order"))[:500]
     if response.is_success and payload.get("success") is True:
         await set_status(order, line, kind, "unknown", "Provider claimed success without a usable key")
