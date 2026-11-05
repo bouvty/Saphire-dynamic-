@@ -21,6 +21,36 @@ class StockValidationTests(unittest.TestCase):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 validate_stock(payload)
 
+
+    def test_successful_public_cache_has_exact_json_keys(self):
+        import asyncio
+        import json
+
+        class Connection:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return False
+
+            async def fetchrow(self, query):
+                return {
+                    "offline_members": 9580,
+                    "online_members": 1092,
+                    "success": True,
+                }
+
+        class Pool:
+            def acquire(self):
+                return Connection()
+
+        response = asyncio.run(public_stock(Pool()))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(response.body),
+            {"offline_members": 9580, "online_members": 1092, "success": True},
+        )
+
     def test_no_database_is_not_fake_success(self):
         import asyncio
         resp=asyncio.run(public_stock(None))
