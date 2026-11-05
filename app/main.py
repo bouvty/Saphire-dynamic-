@@ -224,6 +224,16 @@ def redact_private(value):
     return value
 
 
+def format_delivery_message(provider_key: str) -> str:
+    """Human-readable plain-text delivery, with no JSON or Markdown wrappers."""
+    return (
+        "Thank you for using saphire ❤️\n"
+        "please use our redeem panel below to redeem your key, follow the steps provided.\n"
+        "https://memberix.live/redeem\n"
+        f"key - {provider_key}"
+    )
+
+
 def provider_order_id(order, line, kind):
     return "dsc-" + hashlib.sha256((order + "|" + line + "|" + kind).encode()).hexdigest()[:12]
 
@@ -280,7 +290,7 @@ async def fulfill(kind: str, request: Request):
                 if row["quantity"] != quantity:
                     raise HTTPException(409, "Order quantity mismatch on retry")
                 if row["status"] == "success":
-                    return PlainTextResponse(row["provider_key"])
+                    return PlainTextResponse(format_delivery_message(row["provider_key"]))
                 if row["status"] == "failed":
                     raise HTTPException(502, "Provider rejected order; contact support")
                 raise HTTPException(503, "Delivery pending verification; contact support")
@@ -309,7 +319,7 @@ async def fulfill(kind: str, request: Request):
                 provider_response=$5::jsonb,updated_at=now()
                 WHERE shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3""",
                 order, line, kind, payload["key"], json.dumps(payload))
-        return PlainTextResponse(payload["key"])
+        return PlainTextResponse(format_delivery_message(payload["key"]))
     error = str(payload.get("error", "Provider rejected order"))[:500]
     if response.is_success and payload.get("success") is True:
         await set_status(order, line, kind, "unknown", "Provider claimed success without a usable key")
