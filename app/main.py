@@ -4,12 +4,13 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 from contextlib import asynccontextmanager
 
 import asyncpg
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("saphire.delivery")
@@ -20,21 +21,48 @@ PROVIDER_URL = "https://delivery.discorium.cc/api/v2/reseller/custom/delivery/me
 async def lifespan(app):
     global DB
     url = os.getenv("DATABASE_URL")
-    if not url:
-        raise RuntimeError("DATABASE_URL missing; set Railway service variables")
-    DB = await asyncpg.create_pool(url, min_size=1, max_size=8, command_timeout=30)
+    if url:
+        try:
+            DB = await asyncpg.create_pool(url, min_size=1, max_size=8, command_timeout=30)
+        except Exception:
+            log.exception("Database unavailable; API delivery remains disabled")
+    else:
+        log.warning("DATABASE_URL not configured; API delivery remains disabled")
     try:
         yield
     finally:
-        await DB.close()
+        if DB is not None:
+            await DB.close()
 
 app = FastAPI(title="Saphire Shoppex Delivery", lifespan=lifespan, docs_url=None, redoc_url=None)
 
+ACCESS_HTML = (Path(__file__).parent / "access_declined.html").read_text(encoding="utf-8")
+
+@app.get("/_liveness")
+async def liveness():
+    return {"status": "running"}
+
 @app.get("/health")
 async def health():
-    async with DB.acquire() as conn:
-        await conn.fetchval("SELECT 1")
+    if DB is None:
+        return JSONResponse({"status": "degraded", "database": "unavailable"}, status_code=503)
+    try:
+        async with DB.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+    except Exception:
+        return JSONResponse({"status": "degraded", "database": "unavailable"}, status_code=503)
     return {"status": "ok"}
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/404", response_class=HTMLResponse, include_in_schema=False)
+async def access_declined():
+    return HTMLResponse(ACCESS_HTML, status_code=404)
+
+@app.exception_handler(404)
+async def not_found(request: Request, exc: HTTPException):
+    if request.method in ("GET", "HEAD"):
+        return HTMLResponse(ACCESS_HTML, status_code=404)
+    return JSONResponse({"detail": "Not Found"}, status_code=404)
 
 def authenticate(request: Request, raw: bytes, kind: str):
     env_name = "SHOPPEX_OFFLINE_SIGNING_SECRET" if kind == "offline" else "SHOPPEX_ONLINE_SIGNING_SECRET"
@@ -119,6 +147,8 @@ async def fulfill(kind: str, request: Request):
     if len(raw) > 65536:
         raise HTTPException(413, "Payload too large")
     authenticate(request, raw, kind)
+    if DB is None:
+        raise HTTPException(503, "Delivery service unavailable")
     try:
         body = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
