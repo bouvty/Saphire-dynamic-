@@ -148,6 +148,17 @@ def extract(body):
     server = str(server)[:500] if server is not None else None
     return str(order), str(line or "default"), quantity, server
 
+def redact_private(value):
+    """Store all non-secret Shoppex order data without any embedded credentials."""
+    blocked = ("password", "secret", "token", "api_key", "authorization", "private_key", "signature", "bearer", "card_number", "cvv")
+    if isinstance(value, dict):
+        return {str(k): ("[REDACTED]" if any(x in str(k).lower() for x in blocked)
+                         else redact_private(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_private(item) for item in value]
+    return value
+
+
 def provider_order_id(order, line, kind):
     return "dsc-" + hashlib.sha256((order + "|" + line + "|" + kind).encode()).hexdigest()[:12]
 
@@ -180,13 +191,24 @@ async def fulfill(kind: str, request: Request):
     if line == "default":
         line = request.headers["x-shoppex-delivery"]
     pid = provider_order_id(order, line, kind)
+    shoppex_delivery_id = request.headers.get("x-shoppex-delivery")
+    product = pick(body, "product_id", "product.id", "product.uniqid", "product", "item.product_id")
+    invoice = pick(body, "invoice_id", "invoice.id", "invoice.uniqid", "invoice", "order.invoice_id")
+    customer_email = pick(body, "customer.email", "email", "customer_email", "buyer.email")
+    shoppex_event = request.headers.get("x-shoppex-event")
     async with DB.acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow("""INSERT INTO public.delivery_orders
-                  (shoppex_order_id,line_item_id,members_type,quantity,discord_server,provider_order_id,status,request_payload)
-                  VALUES($1,$2,$3,$4,$5,$6,'processing',$7::jsonb)
+                  (shoppex_order_id,line_item_id,members_type,quantity,discord_server,provider_order_id,status,request_payload,
+                   shoppex_delivery_id,shoppex_product_id,shoppex_invoice_id,shoppex_customer_email,shoppex_event)
+                  VALUES($1,$2,$3,$4,$5,$6,'processing',$7::jsonb,$8,$9,$10,$11,$12)
                   ON CONFLICT(shoppex_order_id,line_item_id,members_type) DO NOTHING RETURNING *""",
-                  order, line, kind, quantity, server, pid, json.dumps({"order_id": order, "line_item_id": line, "quantity": quantity, "members_type": kind, "discord_server": server}))
+                  order, line, kind, quantity, server, pid, json.dumps(redact_private(body)),
+                  shoppex_delivery_id,
+                  str(product)[:128] if isinstance(product, (str, int)) else None,
+                  str(invoice)[:128] if isinstance(invoice, (str, int)) else None,
+                  str(customer_email)[:320] if isinstance(customer_email, str) else None,
+                  str(shoppex_event)[:128] if shoppex_event else None)
             if row is None:
                 row = await conn.fetchrow("""SELECT * FROM public.delivery_orders WHERE
                   shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3""", order, line, kind)
