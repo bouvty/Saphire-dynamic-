@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import hmac
 import json
@@ -12,6 +13,7 @@ import asyncpg
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
+from app.member_stock import sync_loop, public_stock
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("saphire.delivery")
@@ -29,9 +31,16 @@ async def lifespan(app):
             log.exception("Database unavailable; API delivery remains disabled")
     else:
         log.warning("DATABASE_URL not configured; API delivery remains disabled")
+    stock_task = asyncio.create_task(sync_loop(DB)) if DB is not None else None
     try:
         yield
     finally:
+        if stock_task is not None:
+            stock_task.cancel()
+            try:
+                await stock_task
+            except asyncio.CancelledError:
+                pass
         if DB is not None:
             await DB.close()
 
@@ -74,6 +83,12 @@ async def unauthorized_handler(request: Request, exc: HTTPException):
 @app.exception_handler(403)
 async def forbidden_handler(request: Request, exc: HTTPException):
     return auth_error_response(request, 403, str(exc.detail))
+
+
+@app.get("/v2/stock/members/")
+@app.get("/v2/stock/members", include_in_schema=False)
+async def get_member_stock():
+    return await public_stock(DB)
 
 
 @app.get("/_liveness")
