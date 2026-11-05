@@ -31,6 +31,29 @@ class SecurityTests(unittest.TestCase):
         with patch.dict(os.environ, {"SHOPPEX_OFFLINE_SIGNING_SECRET":"test-secret"}):
             authenticate(signed_request(payload), payload, "offline")
 
+    def test_signed_delivery_id_in_payload(self):
+        payload = b'{"order":"INV-TEST","delivery_id":"delivery-002","quantity":1}'
+        timestamp = str(int(time.time()))
+        digest = hmac.new(b"test-secret", b"delivery-002."+timestamp.encode()+b"."+payload, hashlib.sha256).hexdigest()
+        headers = [(b"x-shoppex-timestamp",timestamp.encode()),
+                   (b"x-shoppex-signature-v2",("v1,t="+timestamp+",h="+digest).encode())]
+        request = Request({"type":"http","method":"POST","path":"/","headers":headers})
+        with patch.dict(os.environ,{"SHOPPEX_OFFLINE_SIGNING_SECRET":"test-secret"}):
+            authenticate(request,payload,"offline")
+        self.assertEqual(request.state.shoppex_delivery_id, "delivery-002")
+
+    def test_missing_signed_delivery_identifier_is_rejected(self):
+        payload = b'{"order":"INV-TEST","quantity":1}'
+        timestamp = str(int(time.time()))
+        digest = hmac.new(b"test-secret",b"delivery-002."+timestamp.encode()+b"."+payload,hashlib.sha256).hexdigest()
+        request = Request({"type":"http","method":"POST","path":"/","headers":[
+            (b"x-shoppex-timestamp", timestamp.encode()),
+            (b"x-shoppex-signature-v2", ("v1,t="+timestamp+",h="+digest).encode())]})
+        with patch.dict(os.environ,{"SHOPPEX_OFFLINE_SIGNING_SECRET":"test-secret"}):
+            with self.assertRaises(HTTPException) as exc:
+                authenticate(request,payload,"offline")
+            self.assertEqual(exc.exception.status_code,401)
+
     def test_body_tampering_is_rejected(self):
         payload = b'{"order":"INV-TEST","product":"P1","quantity":1}'
         with patch.dict(os.environ, {"SHOPPEX_OFFLINE_SIGNING_SECRET":"test-secret"}):
