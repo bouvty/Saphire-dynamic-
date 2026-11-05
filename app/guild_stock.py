@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import time
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import HTTPException
@@ -32,6 +33,60 @@ def validate_guild_id(value: str) -> str:
     if snowflake <= 0 or timestamp_ms > now_ms + 86400000:
         raise HTTPException(status_code=422, detail="Invalid Discord guild ID")
     return value
+
+
+def parse_invite_code(value: str) -> str | None:
+    """Recognise only official Discord invite hosts, never arbitrary URLs."""
+    if not isinstance(value, str) or len(value) > 250:
+        raise HTTPException(status_code=422, detail="Invalid guild ID or Discord invite")
+    value = value.strip()
+    if not value:
+        raise HTTPException(status_code=422, detail="Invalid guild ID or Discord invite")
+    candidate = value if "://" in value else "https://" + value
+    try:
+        url = urlsplit(candidate)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid Discord invite")
+    host = (url.hostname or "").lower()
+    if url.scheme != "https" or url.port is not None or url.username is not None or url.password is not None:
+        raise HTTPException(status_code=422, detail="Invalid Discord invite")
+    parts = [part for part in url.path.split("/") if part]
+    if host in ("discord.gg", "www.discord.gg"):
+        code = parts[0] if len(parts) == 1 else ""
+    elif host in ("discord.com", "www.discord.com", "discordapp.com", "www.discordapp.com"):
+        code = parts[1] if len(parts) == 2 and parts[0] == "invite" else ""
+    else:
+        raise HTTPException(status_code=422, detail="Invalid guild ID or Discord invite")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{2,64}", code):
+        raise HTTPException(status_code=422, detail="Invalid Discord invite")
+    return code
+
+
+async def resolve_invite(client: httpx.AsyncClient, code: str) -> dict:
+    """Discord GET /invites/:code verifies invitation and yields its guild ID."""
+    try:
+        resp = await client.get(
+            f"https://discord.com/api/v10/invites/{code}",
+            headers={"Accept": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Discord invite verification unavailable") from exc
+    if resp.status_code in (400, 404):
+        raise HTTPException(status_code=422, detail="Invalid or expired Discord server invite")
+    if resp.status_code == 429:
+        raise HTTPException(status_code=503, detail="Discord is rate limiting checks; try again shortly")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail="Discord invite verification unavailable")
+    try:
+        body = resp.json()
+        guild = body.get("guild")
+        guild_id = validate_guild_id(str(guild.get("id")))
+        name = guild.get("name")
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("Missing guild name")
+    except (ValueError, AttributeError, TypeError, HTTPException) as exc:
+        raise HTTPException(status_code=422, detail="Invalid Discord server invite") from exc
+    return {"id": guild_id, "name": name[:100]}
 
 
 def validate_guild_payload(payload: object, guild_id: str) -> dict:
@@ -63,18 +118,20 @@ async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) ->
     distinguished. Never label both cases 'invalid'.
     """
     token = os.getenv("DISCORD_BOT_TOKEN", "").strip()
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail="Discord guild verification is not configured on the API",
-        )
-    try:
-        response = await client.get(
-            f"https://discord.com/api/v10/guilds/{guild_id}",
-            headers={"Authorization": "Bot " + token, "Accept": "application/json"},
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
+    # Public/discoverable servers can be checked without a bot token.
+    # For private guild IDs, verification requires a bot in the guild or a
+    # valid invite, which is separately checked against Discord.
+    response = None
+    if token:
+        try:
+            response = await client.get(
+                f"https://discord.com/api/v10/guilds/{guild_id}",
+                headers={"Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Discord verification unavailable") from exc
+    else:
+        response = httpx.Response(404)
     if response.status_code == 401:
         log.error("Discord guild verification credentials rejected")
         raise HTTPException(status_code=503, detail="Discord guild verification unavailable")
@@ -97,7 +154,7 @@ async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) ->
             # nonexistent ones. Do not request provider stock if unverified.
             raise HTTPException(
                 status_code=404,
-                detail="Discord could not verify this server. Add the verification bot to the server or use a discoverable server.",
+                detail="Discord could not verify this guild ID. Use a valid Discord invite or a server that the verification bot can access.",
             )
         response = preview
     if response.status_code != 200:
@@ -116,15 +173,28 @@ async def verify_guild_with_discord(client: httpx.AsyncClient, guild_id: str) ->
 
 
 async def get_guild_stock(guild_id: str) -> dict:
-    guild_id = validate_guild_id(guild_id)
+    """Validate input, verify guild through Discord, then mirror provider stock."""
+    raw = guild_id.strip() if isinstance(guild_id, str) else ""
+    invite = None
+    if SNOWFLAKE_RE.fullmatch(raw):
+        guild_id = validate_guild_id(raw)
+    else:
+        invite = parse_invite_code(raw)
     async with _cache_lock:
-        cached = _cache.get(guild_id)
-        if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
-            return cached[1]
+        # A verified invite always resolves through Discord before cache lookup.
         async with httpx.AsyncClient(timeout=httpx.Timeout(12), follow_redirects=False) as client:
-            # Discord is checked FIRST. Never contact the stock provider
-            # for malformed, unverified, or inaccessible guild IDs.
-            discord_guild = await verify_guild_with_discord(client, guild_id)
+            if invite:
+                discord_guild = await resolve_invite(client, invite)
+                guild_id = discord_guild["id"]
+            else:
+                guild_id = validate_guild_id(guild_id)
+                discord_guild = None
+
+            cached = _cache.get(guild_id)
+            if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
+                return cached[1]
+            if discord_guild is None:
+                discord_guild = await verify_guild_with_discord(client, guild_id)
             try:
                 response = await client.get(
                     GUILD_STOCK_URL,
@@ -132,9 +202,7 @@ async def get_guild_stock(guild_id: str) -> dict:
                     headers={"Accept": "application/json"},
                 )
                 if response.status_code in (400, 404, 422):
-                    raise HTTPException(
-                        status_code=404, detail="No provider stock found for this guild"
-                    )
+                    raise HTTPException(status_code=404, detail="No provider stock found for this guild")
                 response.raise_for_status()
                 if len(response.content) > MAX_RESPONSE_BYTES:
                     raise ValueError("Provider response too large")
@@ -143,12 +211,9 @@ async def get_guild_stock(guild_id: str) -> dict:
                 raise
             except (httpx.HTTPError, ValueError) as error:
                 log.warning("Guild stock provider unavailable: %s", type(error).__name__)
-                raise HTTPException(
-                    status_code=502, detail="Guild stock provider unavailable"
-                ) from error
+                raise HTTPException(status_code=502, detail="Guild stock provider unavailable") from error
         if len(_cache) >= 256:
             _cache.clear()
-        # Keep the original JSON keys and attach Discord-verified guild name.
         payload["guild_name"] = discord_guild["name"]
         _cache[guild_id] = (time.monotonic(), payload)
         return payload
