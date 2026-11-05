@@ -22,7 +22,7 @@ Never expose provider keys to clients except delivered per-order keys. SQL table
 
 
 ## Guild-specific stock checking (public API)
-GET `https://api.saphire.rip/v2/stock/members/check/guild?guild_id=1521285253204021389`
+GET `https://api.saphire.rip/v2/stock/members/check/guild?guild_id=1521285253204021389`\n\nThe `guild_id` query value may also be an official invite URL, such as `https://discord.gg/example` (URL-encoded). The API first calls Discord's Get Invite endpoint, extracts the verified guild ID, and then calls the provider. Discoverable guild IDs can be verified without a bot token; private guilds require a valid invite or a bot in the guild. Unknown/inaccessible numeric IDs are not automatically declared nonexistent. The frontend preview generates the canonical route `/stock/check/guild?guild_id=<resolved_id>`; hosting this single-page preview requires a rewrite from `/stock/check/guild` to `/index.html`.
 
 A Discord snowflake is checked for plausible format and timestamp before any network request. The backend then uses the official Discord API to verify the guild with a bot token, falling back to Discord's preview endpoint for discoverable guilds. Only when Discord verifies the guild does the API call the provider's `/api/v2/stock/guild` endpoint and return validated online/offline/total stock plus a Discord-confirmed `guild_name`.
 
