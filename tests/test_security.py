@@ -73,7 +73,8 @@ class SecurityTests(unittest.TestCase):
             browserless=client.get(route,headers={"accept":"application/json"})
             self.assertEqual(browserless.status_code,401)
             self.assertIn("application/json",browserless.headers["content-type"])
-            signed=client.post(route,json={"order":"TEST","quantity":1},headers={"accept":"text/html"})
+            with patch.dict(os.environ, {"SHOPPEX_ONLINE_SIGNING_SECRET": "test-secret"}):
+                signed=client.post(route,json={"order":"TEST","quantity":1},headers={"accept":"text/html"})
             self.assertEqual(signed.status_code,401)
             self.assertIn("application/json",signed.headers["content-type"])
 
