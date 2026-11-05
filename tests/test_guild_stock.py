@@ -5,7 +5,7 @@ from unittest.mock import patch
 import httpx
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from app.guild_stock import validate_guild_id, validate_guild_payload, verify_guild_with_discord, get_guild_stock, _cache
+from app.guild_stock import validate_guild_id, validate_guild_payload, verify_guild_with_discord, get_guild_stock, parse_invite_code, _cache
 from app.main import app
 
 GUILD_ID = "1521285253204021389"
@@ -28,14 +28,50 @@ class GuildStockTests(unittest.TestCase):
             with self.subTest(fields=fields),self.assertRaises(ValueError):
                 validate_guild_payload({**EXAMPLE,**fields},GUILD_ID)
 
+    def test_invite_parser_accepts_only_discord_hosts(self):
+        self.assertEqual(parse_invite_code("https://discord.gg/abc123"), "abc123")
+        self.assertEqual(parse_invite_code("discord.com/invite/abc123"), "abc123")
+        for value in ("https://evil.example/invite/abc", "discord.gg.evil.com/abc",
+                      "https://discord.gg/", "https://discord.gg/a/b"):
+            with self.subTest(value=value), self.assertRaises(HTTPException):
+                parse_invite_code(value)
+
+    def test_live_invite_verified_before_provider(self):
+        calls=[]
+        def handle(request):
+            calls.append(str(request.url))
+            if "/invites/" in str(request.url):
+                return httpx.Response(200,json={"guild":{"id":GUILD_ID,"name":"My Server"}})
+            return httpx.Response(200,json=EXAMPLE)
+        original_client=httpx.AsyncClient
+        transport=httpx.MockTransport(handle)
+        async def run():
+            _cache.clear()
+            with patch("app.guild_stock.httpx.AsyncClient",side_effect=lambda *a,**kw:original_client(transport=transport)):
+                return await get_guild_stock("https://discord.gg/abc123")
+        data=asyncio.run(run())
+        self.assertEqual(data["guild_id"],GUILD_ID)
+        self.assertEqual(data["guild_name"],"My Server")
+        self.assertEqual(len(calls),2)
+        self.assertIn("discord.com/api/v10/invites/abc123",calls[0])
+
     def test_no_bot_token_is_not_false_verification(self):
         async def run():
             async with httpx.AsyncClient() as client:
                 with patch.dict("os.environ", {"DISCORD_BOT_TOKEN": ""}):
                     await verify_guild_with_discord(client,GUILD_ID)
+        # A public preview is checked even if there is no bot configured.
+        # An unreachable/undiscoverable guild must not be silently approved.
+        original_client=httpx.AsyncClient
+        transport=httpx.MockTransport(lambda req:httpx.Response(404))
+        async def probe():
+            with patch.dict("os.environ", {"DISCORD_BOT_TOKEN": ""}):
+                with patch("app.guild_stock.httpx.AsyncClient",side_effect=lambda *a,**kw:original_client(transport=transport)):
+                    async with httpx.AsyncClient() as client:
+                        await verify_guild_with_discord(client,GUILD_ID)
         with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(run())
-        self.assertEqual(ctx.exception.status_code,503)
+            asyncio.run(probe())
+        self.assertEqual(ctx.exception.status_code,404)
 
     def test_verified_guild_calls_discord_before_provider(self):
         calls=[]
