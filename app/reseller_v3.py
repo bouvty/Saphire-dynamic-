@@ -94,7 +94,8 @@ async def reseller_fulfill(kind: str, request: Request):
     from app import main as backend
     if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
         return text_error(415)
-    if request.headers.get("content-length", "0").isdigit() and int(request.headers["content-length"]) > 65536:
+    content_length = request.headers.get("content-length")
+    if content_length is not None and content_length.isdigit() and int(content_length) > 65536:
         return text_error(413)
     raw = await request.body()
     if len(raw) > 65536:
