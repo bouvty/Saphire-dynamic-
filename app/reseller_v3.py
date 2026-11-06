@@ -145,6 +145,17 @@ async def reseller_fulfill(kind: str, request: Request):
         invoice_ref = None
     if invoice_ref is not None:
         invoice_ref = str(invoice_ref)[:128]
+    product_ref = backend.pick(body, "product.id", "product.uniqid", "productId", "product_id", "item.product_id")
+    if isinstance(product_ref, bool) or not isinstance(product_ref, (str, int)):
+        product_ref = None
+    else:
+        product_ref = str(product_ref)[:128]
+    customer_email = backend.pick(body, "customer.email", "customer_email", "customerEmail", "invoice.customer_email")
+    customer_email = str(customer_email)[:320] if isinstance(customer_email, str) else None
+    event = request.headers.get("x-shoppex-event")
+    event = event[:128] if event else None
+    # Only retain redacted Shoppex data, never signing secrets or payment credentials.
+    shoppex_data = json.dumps(backend.redact_private(body))
     provider_order_id = "r3-" + hashlib.sha256(
         (user_id + "|" + order + "|" + line + "|" + kind).encode()
     ).hexdigest()[:24]
@@ -177,9 +188,11 @@ async def reseller_fulfill(kind: str, request: Request):
                 row_id = await conn.fetchval(
                     "INSERT INTO public.resellers_orders "
                     "(reseller_user_id,shoppex_order_id,line_item_id,members_type,quantity,"
-                    "shoppex_delivery_id,provider_order_id,shoppex_invoice_id,status) "
-                    "VALUES($1,$2,$3,$4,$5,$6,$7,$8,'processing') RETURNING id",
-                    user_id, order, line, kind, quantity, signed_delivery_id, provider_order_id, invoice_ref
+                    "shoppex_delivery_id,provider_order_id,shoppex_invoice_id,"
+                    "shoppex_data,shoppex_product_id,shoppex_customer_email,shoppex_event,status) "
+                    "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,'processing') RETURNING id",
+                    user_id, order, line, kind, quantity, signed_delivery_id, provider_order_id, invoice_ref,
+                    shoppex_data, product_ref, customer_email, event
                 )
                 # Under the account row lock, debit and order reservation are atomic.
                 await conn.execute(
