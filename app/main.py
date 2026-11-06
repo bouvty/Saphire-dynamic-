@@ -158,6 +158,7 @@ def authenticate(request: Request, raw: bytes, kind: str):
         request.headers.get("x-shoppex-delivery"),
         request.headers.get("x-shoppex-delivery-id"),
         request.headers.get("x-shoppex-webhook-id"),
+        request.headers.get("x-shoppex-idempotency-key"),
         request.headers.get("webhook-id"),
     ]
     try:
