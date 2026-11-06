@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from app.member_stock import sync_loop, public_stock
 from app.guild_stock import get_guild_stock
+from app.reseller_v3 import router as reseller_v3_router
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("saphire.delivery")
@@ -46,6 +47,7 @@ async def lifespan(app):
             await DB.close()
 
 app = FastAPI(title="Saphire Shoppex Delivery", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(reseller_v3_router)
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
