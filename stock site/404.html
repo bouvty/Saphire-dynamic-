@@ -15,7 +15,7 @@
     html,body{min-height:100%;margin:0}
     body{background:var(--bg);font-family:"DM Sans",sans-serif;color:var(--text);display:grid;place-items:center;overflow-x:hidden}
     .aura{pointer-events:none;position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse 55% 42% at 50% 44%,rgba(116,48,141,.21) 0%,transparent 85%),radial-gradient(ellipse 35% 36% at 93% 93%,rgba(119,38,154,.1),transparent 100%)}
-    .orb{position:fixed;z-index:0;width:500px;height:500px;border-radius:50%;border:1px solid rgba(175,100,221,.05);box-shadow:0 0 140px rgba(147,63,188,.08);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:orb 7s ease-in-out infinite}
+    .orb{position:fixed;z-index:0;width:500px;height:500px;border-radius:50%;border:1px solid rgba(175,100,221,.05);box-shadow:0 0 140px rgba(147,63,188,.08);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:none}
     .wrap{position:relative;z-index:1;text-align:center;max-width:670px;width:100%;padding:65px 24px;animation:rise .65s cubic-bezier(.2,.8,.2,1) both}
     .pill{display:inline-flex;align-items:center;gap:10px;padding:10px 15px;border:1px solid rgba(165,97,213,.27);background:rgba(50,26,65,.38);border-radius:999px;color:#cf94fc;letter-spacing:.17em;font:600 10px "Unbounded",sans-serif}
     .pill i{display:block;width:6px;height:6px;background:#d589fa;border-radius:50%;box-shadow:0 0 14px #d389fb}
@@ -32,7 +32,7 @@
     .divider{width:70px;height:1px;margin:44px auto 20px;background:linear-gradient(90deg,transparent,#61406f,transparent)}
     .foot{font-size:12px;color:#776982}
     @keyframes rise{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-    @keyframes orb{50%{opacity:.5;transform:translate(-50%,-50%) scale(1.13)}}
+    
     @media(max-width:450px){.wrap{padding:40px 18px}.button{flex:1 1 100%}.number{margin:30px 0 12px}}
     @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
   </style>
