@@ -140,6 +140,11 @@ async def reseller_fulfill(kind: str, request: Request):
         return text_error(422)
     if line == "default":
         line = signed_delivery_id
+    invoice_ref = backend.pick(body, "invoice.id", "invoice.uniqid", "invoiceId", "invoice_id")
+    if isinstance(invoice_ref, bool) or not isinstance(invoice_ref, (str, int)):
+        invoice_ref = None
+    if invoice_ref is not None:
+        invoice_ref = str(invoice_ref)[:128]
     provider_order_id = "r3-" + hashlib.sha256(
         (user_id + "|" + order + "|" + line + "|" + kind).encode()
     ).hexdigest()[:24]
@@ -172,9 +177,9 @@ async def reseller_fulfill(kind: str, request: Request):
                 row_id = await conn.fetchval(
                     "INSERT INTO public.resellers_orders "
                     "(reseller_user_id,shoppex_order_id,line_item_id,members_type,quantity,"
-                    "shoppex_delivery_id,provider_order_id,status) "
-                    "VALUES($1,$2,$3,$4,$5,$6,$7,'processing') RETURNING id",
-                    user_id, order, line, kind, quantity, signed_delivery_id, provider_order_id
+                    "shoppex_delivery_id,provider_order_id,shoppex_invoice_id,status) "
+                    "VALUES($1,$2,$3,$4,$5,$6,$7,$8,'processing') RETURNING id",
+                    user_id, order, line, kind, quantity, signed_delivery_id, provider_order_id, invoice_ref
                 )
                 # Under the account row lock, debit and order reservation are atomic.
                 await conn.execute(
