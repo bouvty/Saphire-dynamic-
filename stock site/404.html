@@ -13,9 +13,9 @@
     :root{color-scheme:dark;--bg:#08060c;--text:#f7f1f9;--muted:#9e92a7;--accent:#bc78ef;--line:#493354}
     *,*::before,*::after{box-sizing:border-box}
     html,body{min-height:100%;margin:0}
-    body{background:var(--bg);font-family:"DM Sans",sans-serif;color:var(--text);display:grid;place-items:center;overflow-x:hidden}
-    .aura{pointer-events:none;position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse 55% 42% at 50% 44%,rgba(116,48,141,.21) 0%,transparent 85%),radial-gradient(ellipse 35% 36% at 93% 93%,rgba(119,38,154,.1),transparent 100%)}
-    .orb{position:fixed;z-index:0;width:500px;height:500px;border-radius:50%;border:1px solid rgba(175,100,221,.05);box-shadow:0 0 140px rgba(147,63,188,.08);top:50%;left:50%;transform:translate(-50%,-50%);pointer-events:none;animation:none}
+    html{background:var(--bg)}
+    body{min-height:100vh;min-height:100dvh;background:radial-gradient(ellipse 65% 40% at 50% 13%,rgba(100,45,125,.15),transparent 92%),radial-gradient(ellipse 45% 45% at 95% 95%,rgba(110,44,130,.085),transparent 95%),var(--bg);font-family:"DM Sans",sans-serif;color:var(--text);display:grid;place-items:center;overflow-x:hidden}
+    .aura{pointer-events:none;position:fixed;inset:0;z-index:0;background:linear-gradient(180deg,rgba(16,10,20,.03),transparent 75%)}
     .wrap{position:relative;z-index:1;text-align:center;max-width:670px;width:100%;padding:65px 24px;animation:rise .65s cubic-bezier(.2,.8,.2,1) both}
     .pill{display:inline-flex;align-items:center;gap:10px;padding:10px 15px;border:1px solid rgba(165,97,213,.27);background:rgba(50,26,65,.38);border-radius:999px;color:#cf94fc;letter-spacing:.17em;font:600 10px "Unbounded",sans-serif}
     .pill i{display:block;width:6px;height:6px;background:#d589fa;border-radius:50%;box-shadow:0 0 14px #d389fb}
@@ -38,7 +38,7 @@
   </style>
 </head>
 <body>
-  <div class="aura" aria-hidden="true"></div><div class="orb" aria-hidden="true"></div>
+  <div class="aura" aria-hidden="true"></div>
   <main class="wrap">
     <div class="pill"><i aria-hidden="true"></i> SAPHIRE STOCK / ERROR</div>
     <div class="number" aria-hidden="true">404</div>
