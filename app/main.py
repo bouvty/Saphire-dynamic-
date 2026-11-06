@@ -254,13 +254,12 @@ def redact_private(value):
 def format_delivery_message(provider_key: str) -> str:
     """Identical plain-text Shoppex delivery for both online and offline orders.
 
-    Markdown markers are literal text so Shoppex may render them as bold,
-    while the HTTP response always remains text/plain.
+    Always return clean text/plain without Markdown formatting markers.
     """
     return (
-        "**Thank you for using saphire ❤️**\n"
+        "Thank you for using saphire ❤️\n"
         "please use our redeem panel below to redeem your key, follow the steps provided.\n"
-        f"**https://memberix.live/redeem     KEY:** {provider_key}"
+        f"https://memberix.live/redeem     KEY: {provider_key}"
     )
 
 def provider_order_id(order, line, kind):
