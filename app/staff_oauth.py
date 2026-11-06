@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from urllib.parse import urlencode
 
 import httpx
@@ -33,24 +34,42 @@ def oauth_config():
     return client_id, secret, callback
 
 
+_PAGE_TEMPLATE = (Path(__file__).with_name("staff_auth_page.html")).read_text(encoding="utf-8")
+_ICON_CHECK = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="m5 12 4.5 4.5L19 7"/></svg>'
+)
+_ICON_ALERT = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M12 9v4m0 4h.01"/><path d="M10.3 3.9 2.2 18.1A2 2 0 0 0 3.9 21h16.2a2 2 0 0 0 1.7-2.9L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>'
+)
+
+
 def page(title, message, status=200):
-    title, message = html.escape(title, quote=True), html.escape(message, quote=True)
-    body = (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
-            f'<meta name="viewport" content="width=device-width, initial-scale=1"><title>{title} | Saphire</title></head>'
-            f'<body style="margin:0;background:#09090d;color:#fff;font-family:system-ui;min-height:100vh;display:grid;place-items:center">'
-            f'<main style="text-align:center;background:#15141b;border:1px solid #34303e;max-width:460px;border-radius:18px;padding:40px">'
-            f'<p style="color:#a992fb;letter-spacing:3px">SAPHIRE STAFF</p><h1>{title}</h1>'
-            f'<p style="color:#aba9ba;line-height:1.7">{message}</p>'
-            f'<small>Return to Discord and press Check Login.</small></main></body></html>')
-    return HTMLResponse(body, status_code=status, headers={"Cache-Control":"no-store"})
+    title = html.escape(title, quote=True)
+    message = html.escape(message, quote=True)
+    success = status == 200 and title == "Authentication complete"
+    body = (_PAGE_TEMPLATE
+        .replace("__TITLE__", title)
+        .replace("__MESSAGE__", message)
+        .replace("__ICON_CLASS__", "success" if success else "warning")
+        .replace("__ICON_SVG__", _ICON_CHECK if success else _ICON_ALERT))
+    return HTMLResponse(body, status_code=status, headers={
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex, nofollow, noarchive",
+    })
 
 
 @router.get("/v3/staff/auth/start", include_in_schema=False)
 async def staff_oauth_start(request: Request, ticket: str = ""):
     from app import main
     config = oauth_config()
-    if main.DB is None or config is None:
-        return page("Login unavailable", "Discord OAuth client credentials are not configured.", 503)
+    if main.DB is None:
+        return page("Login unavailable", "The staff registration database is temporarily unavailable. Try again from your Discord staff panel.", 503)
+    if config is None:
+        return page("Login unavailable", "Discord OAuth setup is incomplete. A Saphire administrator needs to configure the Discord OAuth client secret on the API server.", 503)
     if TOKEN_RE.fullmatch(ticket) is None:
         return page("Invalid login link", "Start again from your Discord staff panel.", 400)
     async with main.DB.acquire() as conn:
