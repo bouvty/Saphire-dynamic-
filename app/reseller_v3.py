@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import time
 
@@ -132,7 +133,7 @@ async def reseller_fulfill(kind: str, request: Request):
         if not isinstance(body, dict):
             return text_error(422)
         order, line, quantity, _server = backend.extract(body)
-    except (ValueError, UnicodeDecodeError, Exception) as exc:
+    except Exception as exc:
         # The signature was checked before any order processing.
         log.info("v3 invalid Shoppex payload kind=%s error=%s", kind, type(exc).__name__)
         return text_error(422)
