@@ -36,4 +36,4 @@ class StaffOAuthTests(unittest.TestCase):
             "STAFF_DISCORD_CLIENT_SECRET":"","DISCORD_CLIENT_ID":"",
             "DISCORD_CLIENT_SECRET":""}):
             client=TestClient(app)
-            self.assertEqual(client.post("/v3/staff/auth/callback",json={"userid":"1521284328485556357"}).status_code,404)
+            self.assertEqual(client.post("/v3/staff/auth/callback",json={"userid":"1521284328485556357"}).status_code,405)
