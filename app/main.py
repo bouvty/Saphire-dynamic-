@@ -252,13 +252,16 @@ def redact_private(value):
 
 
 def format_delivery_message(provider_key: str) -> str:
-    """Human-readable plain-text delivery, with no JSON or Markdown wrappers."""
-    return (
-        "Thank you for using saphire ❤️\n"
-        "please use our redeem panel below to redeem your key, follow the steps provided.\n"
-        f"https://memberix.live/redeem   KEY: {provider_key}"
-    )
+    """Identical plain-text Shoppex delivery for both online and offline orders.
 
+    Markdown markers are literal text so Shoppex may render them as bold,
+    while the HTTP response always remains text/plain.
+    """
+    return (
+        "**Thank you for using saphire ❤️**\n"
+        "please use our redeem panel below to redeem your key, follow the steps provided.\n"
+        f"**https://memberix.live/redeem     KEY:** {provider_key}"
+    )
 
 def provider_order_id(order, line, kind):
     return "dsc-" + hashlib.sha256((order + "|" + line + "|" + kind).encode()).hexdigest()[:12]
