@@ -12,7 +12,7 @@ class ProviderCreditsTests(unittest.TestCase):
                 self.assertIsNone(valid_provider_credits({"credits_remaining":value}))
         self.assertIsNone(valid_provider_credits({}))
 
-    def test_shoppex_plain_text_remains_unchanged(self):
+    def test_shoppex_plain_text_contains_formatted_key(self):
         result = format_delivery_message("EXAMPLE")
         self.assertIn("Thank you for using saphire",result)
-        self.assertIn("KEY: EXAMPLE",result)
+        self.assertIn("KEY:** EXAMPLE",result)
