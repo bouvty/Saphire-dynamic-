@@ -11,9 +11,9 @@ class PlainTextDeliveryTests(unittest.TestCase):
     def test_delivery_includes_instructions_and_key(self):
         key = "SAMPLE-KEY-ABC123"
         expected = (
-            "Thank you for using saphire ❤️\n"
+            "**Thank you for using saphire ❤️**\n"
             "please use our redeem panel below to redeem your key, follow the steps provided.\n"
-            "https://memberix.live/redeem   KEY: SAMPLE-KEY-ABC123"
+            "**https://memberix.live/redeem     KEY:** SAMPLE-KEY-ABC123"
         )
         response = PlainTextResponse(format_delivery_message(key))
         self.assertEqual(response.body, expected.encode("utf-8"))
