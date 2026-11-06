@@ -262,6 +262,16 @@ def format_delivery_message(provider_key: str) -> str:
 def provider_order_id(order, line, kind):
     return "dsc-" + hashlib.sha256((order + "|" + line + "|" + kind).encode()).hexdigest()[:12]
 
+def valid_provider_credits(payload):
+    """Only accept an explicitly supplied nonnegative integer credit balance."""
+    if not isinstance(payload, dict):
+        return None
+    balance = payload.get("credits_remaining")
+    if type(balance) is int and 0 <= balance <= 9223372036854775807:
+        return balance
+    return None
+
+
 async def set_status(order, line, kind, status, error):
     async with DB.acquire() as conn:
         await conn.execute("""UPDATE public.delivery_orders SET status=$4,error_message=$5,updated_at=now()
@@ -339,11 +349,29 @@ async def fulfill(kind: str, request: Request):
         await set_status(order, line, kind, "unknown", "Provider server error")
         raise HTTPException(502, "Provider outcome uncertain; manual investigation required")
     if response.is_success and payload.get("success") is True and isinstance(payload.get("key"), str) and payload["key"].strip():
+        credits = valid_provider_credits(payload)
         async with DB.acquire() as conn:
-            await conn.execute("""UPDATE public.delivery_orders SET status='success',provider_key=$4,
-                provider_response=$5::jsonb,updated_at=now()
-                WHERE shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3""",
-                order, line, kind, payload["key"], json.dumps(payload))
+            # Store the provider key/response and the corresponding provider
+            # credit balance together. Invalid or absent credit fields never
+            # overwrite a last known valid balance.
+            async with conn.transaction():
+                saved_order_id = await conn.fetchval("""UPDATE public.delivery_orders
+                    SET status='success',provider_key=$4,
+                        provider_response=$5::jsonb,updated_at=now()
+                    WHERE shoppex_order_id=$1 AND line_item_id=$2 AND members_type=$3
+                    RETURNING id""",
+                    order, line, kind, payload["key"], json.dumps(payload))
+                if credits is not None and saved_order_id is not None:
+                    await conn.execute("""INSERT INTO public.provider_credits
+                        (members_type,credits_remaining,last_order_id,updated_at)
+                        VALUES($1,$2,$3,now())
+                        ON CONFLICT(members_type) DO UPDATE SET
+                          credits_remaining=EXCLUDED.credits_remaining,
+                          last_order_id=EXCLUDED.last_order_id,
+                          updated_at=EXCLUDED.updated_at""",
+                        kind, credits, saved_order_id)
+                elif credits is None:
+                    log.warning("Provider response omitted a valid credits_remaining for %s", pid)
         return PlainTextResponse(format_delivery_message(payload["key"]))
     error = str(payload.get("error", "Provider rejected order"))[:500]
     if response.is_success and payload.get("success") is True:
