@@ -58,8 +58,8 @@ class ShoppexResellerV3Tests(unittest.TestCase):
 
     def test_shoppex_plaintext(self):
         self.assertEqual(SUCCESS_PREFIX+"3H76-68PW-Z66N-6HGT",
-            "Thank you for your purchase ❤️\\n"
-            "please use our redeem panel below to redeem your key, follow the steps provided.\\n"
+            "Thank you for your purchase ❤️\n"
+            "please use our redeem panel below to redeem your key, follow the steps provided.\n"
             "https://memberix.live/redeem     KEY: 3H76-68PW-Z66N-6HGT"
         )
         self.assertEqual(NO_CREDITS,
